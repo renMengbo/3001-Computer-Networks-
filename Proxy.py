@@ -69,6 +69,17 @@ while True:
   # and store it in the variable: message_bytes
   # ~~~~ INSERT CODE ~~~~
   message_bytes = clientSocket.recv(BUFFER_SIZE)
+
+  # # 接收完整的请求头（直到 \r\n\r\n）
+  # message_bytes = ""
+  # while True:
+  #   chunk = clientSocket.recv(BUFFER_SIZE).decode('utf-8')
+  #   if not chunk:
+  #       break  # 客户端关闭连接
+  #   message_bytes += chunk
+  #   if "\r\n\r\n" in message_bytes:
+  #       break  # 请求头结束
+
   # ~~~~ END CODE INSERT ~~~~
   message = message_bytes.decode('utf-8')
   print ('Received request:')
@@ -152,6 +163,7 @@ while True:
       # originServerRequest is the first line in the request and
       # originServerRequestHeader is the second line in the request
       # ~~~~ INSERT CODE ~~~~
+      
       #originServerRequest = '{method} {resource} {version}'
       #originServerRequestHeader = '{hostname}'
       
