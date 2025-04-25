@@ -62,7 +62,9 @@ static int windowfirst, windowlast;    /* array indexes of the first/last packet
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
 
-void A_output(struct msg message)
+
+// A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）
+ void A_output(struct msg message)
 {
   struct pkt sendpkt;
   int i;
@@ -105,6 +107,7 @@ void A_output(struct msg message)
   }
 }
 
+// A_input 网络层（3）发往传输层（4）
 void A_input(struct pkt packet)
 {
   int i;
@@ -178,6 +181,7 @@ static int expectedseqnum; /* the sequence number expected next by the receiver 
 static struct pkt buffer[WINDOWSIZE];  /* array for storing out-of-order packets */
 static bool received[WINDOWSIZE];      /* array to track which packets have been received */
 
+//从网络层（3）收取数据到传输层（4）
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
@@ -199,7 +203,7 @@ void B_input(struct pkt packet)
 
     /* deliver in-order packets to the application */
     while (received[0]) {
-      tolayer5(B, buffer[0].payload);
+      tolayer5(B, buffer[0].payload); //由传输层（4）交付给应用层（5）
 
       /* shift the window forward */
       for (i = 0; i < WINDOWSIZE - 1; i++) {
@@ -212,12 +216,12 @@ void B_input(struct pkt packet)
     }
 
     /* send an ACK for the received packet */
-    sendpkt.acknum = packet.seqnum;
+    sendpkt.acknum = packet.seqnum; 
     sendpkt.seqnum = NOTINUSE;
     for (i = 0; i < 20; i++)
-      sendpkt.payload[i] = '0';
+      sendpkt.payload[i] = '0';// 填充无效数据
     sendpkt.checksum = ComputeChecksum(sendpkt);
-    tolayer3(B, sendpkt);
+    tolayer3(B, sendpkt);//由传输层（4）回复给链路层（3）
   }
   else {
     if (TRACE > 0) 
@@ -225,15 +229,7 @@ void B_input(struct pkt packet)
   }
 }
 
-void B_init(void)
-{
-  int i;
-  expectedseqnum = 0;
-  for (i = 0; i < WINDOWSIZE; i++) {
-    received[i] = false;
-  }
-}
-
+ 
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
  *****************************************************************************/
