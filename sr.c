@@ -151,7 +151,7 @@ void A_output(struct msg message)
  
 
 /* 定时器超时回调函数，需要修改以处理单个数据包的超时 */
-void A_timerinterrupt(int timer_id)
+void A_timerinterrupt()
 {
   int i;
 
