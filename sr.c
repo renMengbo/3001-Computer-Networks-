@@ -23,8 +23,8 @@
 **********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
-#define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
-#define SEQSPACE 7      /* the min sequence space for SR must be at least windowsize * 2 */
+#define WINDOWSIZE 4    /* the maximum number of buffered unacked packet */
+#define SEQSPACE WINDOWSIZE*2      /* the min sequence space for SR must be at least windowsize * 2 */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
@@ -63,7 +63,7 @@ static int windowcount;                /* the number of packets currently awaiti
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
 
 
-// A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）
+ /* A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）*/
  void A_output(struct msg message)
 {
   struct pkt sendpkt;
@@ -107,7 +107,7 @@ static int A_nextseqnum;               /* the next sequence number to be used by
   }
 }
 
-// A_input 网络层（3）发往传输层（4）
+/* A_input 网络层（3）发往传输层（4） */
 void A_input(struct pkt packet)
 {
   int i;
@@ -118,7 +118,7 @@ void A_input(struct pkt packet)
       printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
     total_ACKs_received++;
 
-    /* mark the corresponding packet as ACKed */
+    /* mark the corresponding packet as ACKed */ 
     for (i = 0; i < WINDOWSIZE; i++) {
       if (buffer[i].seqnum == packet.acknum) {
         acked[i] = true;
@@ -164,12 +164,13 @@ void A_timerinterrupt(void)
 
 void A_init(void)
 {
+  int i ;
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   windowfirst = 0;
   windowlast = -1;   
   windowcount = 0;
-  int i ;
+  /*int i ;  */
   for (i = 0; i < WINDOWSIZE; i++) {
     acked[i] = false;
   }
@@ -178,14 +179,16 @@ void A_init(void)
 /********* Receiver (B)  variables and procedures ************/
 
 static int expectedseqnum; /* the sequence number expected next by the receiver */
+static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
 static struct pkt buffer[WINDOWSIZE];  /* array for storing out-of-order packets */
 static bool received[WINDOWSIZE];      /* array to track which packets have been received */
 
-//从网络层（3）收取数据到传输层（4）
+/* 从网络层（3）收取数据到传输层（4） */
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
   int i;
+  int index;
 
   /* if not corrupted */
   if (!IsCorrupted(packet)) {
@@ -194,7 +197,7 @@ void B_input(struct pkt packet)
     packets_received++;
 
     /* store the packet if it's within the window */
-    int index;
+    /*int index; */
     index = (packet.seqnum - expectedseqnum + SEQSPACE) % SEQSPACE;
     if (index < WINDOWSIZE) {
       buffer[index] = packet;
@@ -203,7 +206,7 @@ void B_input(struct pkt packet)
 
     /* deliver in-order packets to the application */
     while (received[0]) {
-      tolayer5(B, buffer[0].payload); //由传输层（4）交付给应用层（5）
+      tolayer5(B, buffer[0].payload); /*由传输层（4）交付给应用层（5）*/
 
       /* shift the window forward */
       for (i = 0; i < WINDOWSIZE - 1; i++) {
@@ -219,9 +222,9 @@ void B_input(struct pkt packet)
     sendpkt.acknum = packet.seqnum; 
     sendpkt.seqnum = NOTINUSE;
     for (i = 0; i < 20; i++)
-      sendpkt.payload[i] = '0';// 填充无效数据
+      sendpkt.payload[i] = '0';/* 填充无效数据 */
     sendpkt.checksum = ComputeChecksum(sendpkt);
-    tolayer3(B, sendpkt);//由传输层（4）回复给链路层（3）
+    tolayer3(B, sendpkt);/* 由传输层（4）回复给链路层（3）*/
   }
   else {
     if (TRACE > 0) 
@@ -229,7 +232,13 @@ void B_input(struct pkt packet)
   }
 }
 
- 
+/* the following routine will be called once (only) before any other */
+/* entity B routines are called. You can use it to do any initialization */
+void B_init(void)
+{
+  expectedseqnum = 0;
+  B_nextseqnum = 1;
+}
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
  *****************************************************************************/
