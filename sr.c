@@ -5,12 +5,12 @@
 #include "sr.h"
 
 /* ******************************************************************
-   Go Back N protocol.  Adapted from J.F.Kurose
+   Selective Repeat protocol.  Adapted from J.F.Kurose
    ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.2  
 
    Network properties:
    - one way network delay averages five time units (longer if there
-   are other messages in the channel for GBN), but can be larger
+   are other messages in the channel for RS), but can be larger
    - packets can be corrupted (either the header or the data portion)
    or lost, according to user-defined probabilities
    - packets will be delivered in the order in which they were sent
@@ -19,12 +19,12 @@
    Modifications: 
    - removed bidirectional GBN code and other code not used by prac. 
    - fixed C style to adhere to current programming style
-   - added GBN implementation
+   - added RSSelective Repeat protocol implementation
 **********************************************************************/
 
 #define RTT  16.0       /* round trip time.  MUST BE SET TO 16.0 when submitting assignment */
-#define WINDOWSIZE 4    /* the maximum number of buffered unacked packet */
-#define SEQSPACE WINDOWSIZE*2      /* the min sequence space for SR must be at least windowsize * 2 */
+#define WINDOWSIZE 6    /* the maximum number of buffered unacked packet */
+#define SEQSPACE (WINDOWSIZE*2)      /* the min sequence space for SR must be at least windowsize * 2 */
 #define NOTINUSE (-1)   /* used to fill header fields that are not being used */
 
 /* generic procedure to compute the checksum of a packet.  Used by both sender and receiver  
@@ -62,7 +62,7 @@ static int windowfirst, windowlast;    /* array indexes of the first/last packet
 static int windowcount;                /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
 
-
+/* called from layer 5 (application layer), passed the message to be sent to other side */
  /* A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）*/
  void A_output(struct msg message)
 {
@@ -107,7 +107,13 @@ static int A_nextseqnum;               /* the next sequence number to be used by
   }
 }
 
+/* called from layer 3, when a packet arrives for layer 4 
+   In this practical this will always be an ACK as B never sends data.
+*/
 /* A_input 网络层（3）发往传输层（4） */
+
+
+
 void A_input(struct pkt packet)
 {
   int i;
@@ -120,16 +126,20 @@ void A_input(struct pkt packet)
 
     /* mark the corresponding packet as ACKed */ 
     for (i = 0; i < WINDOWSIZE; i++) {
-      if (buffer[i].seqnum == packet.acknum) {
-        acked[i] = true;
+      int current_index = (windowfirst + i) % WINDOWSIZE;
+      if (buffer[current_index].seqnum == packet.acknum) {
+        acked[current_index] = true;
         break;
       }
     }
 
     /* slide window forward if the first packet in the window is ACKed */
     while (windowcount > 0 && acked[windowfirst]) {
+      acked[windowfirst] = false; /* 重置标记*/
       windowfirst = (windowfirst + 1) % WINDOWSIZE;
       windowcount--;
+      if (TRACE > 1)
+        printf("Window slid forward. New window count: %d\n", windowcount);
     }
 
     /* start timer again if there are still more unacked packets in window */
@@ -149,18 +159,21 @@ void A_timerinterrupt(void)
   if (TRACE > 0)
     printf("----A: time out, resend unacked packets!\n");
 
-  for(i = 0; i < WINDOWSIZE; i++) {
-    if (!acked[i]) {
+  for(i = 0; i < windowcount; i++) {
+    int current_index = (windowfirst + i) % WINDOWSIZE;
+    if (!acked[current_index]) {
       if (TRACE > 0)
-        printf ("---A: resending packet %d\n", buffer[i].seqnum);
+        printf ("---A: resending packet %d\n", buffer[current_index].seqnum);
 
-      tolayer3(A, buffer[i]);
+      tolayer3(A, buffer[current_index]);
       packets_resent++;
     }
   }
 
   starttimer(A, RTT);
-}       
+}
+
+
 
 void A_init(void)
 {
@@ -238,6 +251,10 @@ void B_init(void)
 {
   expectedseqnum = 0;
   B_nextseqnum = 1;
+  int i;
+  for (i = 0; i < WINDOWSIZE; i++) {
+    received[i] = false;
+  }
 }
 /******************************************************************************
  * The following functions need be completed only for bi-directional messages *
