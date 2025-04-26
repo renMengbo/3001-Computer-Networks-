@@ -32,6 +32,7 @@
    original checksum.  This procedure must generate a different checksum to the original if
    the packet is corrupted.
 */
+
 int ComputeChecksum(struct pkt packet)
 {
   int checksum = 0;
@@ -53,150 +54,139 @@ bool IsCorrupted(struct pkt packet)
     return (true);
 }
 
-
 /********* Sender (A) variables and functions ************/
-
-static struct pkt buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
-static bool acked[WINDOWSIZE];         /* array to track which packets have been ACKed */
-static int windowfirst, windowlast;    /* array indexes of the first/last packet awaiting ACK */
-static int windowcount;                /* the number of packets currently awaiting an ACK */
+static struct pkt A_buffer[WINDOWSIZE];  /* array for storing packets waiting for ACK */
+static bool A_acked[WINDOWSIZE];         /* array to track which packets have been ACKed */
+static int A_windowfirst, A_windowlast;   /* array indexes of the first/last packet awaiting ACK */
+static int A_windowcount;               /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
+static int A_timers[WINDOWSIZE];         /* 为每个数据包维护一个定时器标识 */
 
+
+
+/* A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）*/
 /* called from layer 5 (application layer), passed the message to be sent to other side */
- /* A_output 应用层（5）发往传输层（4），调用了tolayer3发往网络层（3）*/
- void A_output(struct msg message)
-{
-  struct pkt sendpkt;
-  int i;
+void A_output(struct msg message)
+ {
+   struct pkt sendpkt;
+   int i;
+ 
+   /* if not blocked waiting on ACK */
+   if ( A_windowcount < WINDOWSIZE) {
+     if (TRACE > 1)
+       printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
+ 
+     /* create packet */
+     sendpkt.seqnum = A_nextseqnum;
+     sendpkt.acknum = NOTINUSE;
+     for ( i=0; i<20 ; i++ ) 
+       sendpkt.payload[i] = message.data[i];
+     sendpkt.checksum = ComputeChecksum(sendpkt); 
+ 
+     /* put packet in window buffer */
+     A_windowlast = (A_windowlast + 1) % WINDOWSIZE;
+     A_buffer[A_windowlast] = sendpkt;
+     A_acked[A_windowlast] = false;  /* Mark packet as unacked*/
+     A_windowcount++;
+ 
+     /* send out packet */
+     if (TRACE > 0)
+       printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
+     tolayer3 (A, sendpkt);
+ 
+     /* 启动对应的定时器 */
+     A_timers[A_windowlast] = starttimer(A, RTT);
+ 
+     /* get next sequence number, wrap back to 0 */
+     A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
+   }
+   /* if blocked,  window is full */
+   else {
+     if (TRACE > 0)
+       printf("----A: New message arrives, send window is full\n");
+     window_full++;
+   }
+ }
 
-  /* if not blocked waiting on ACK */
-  if ( windowcount < WINDOWSIZE) {
-    if (TRACE > 1)
-      printf("----A: New message arrives, send window is not full, send new messge to layer3!\n");
+ void A_input(struct pkt packet)
+ {
+   int i;
+ 
+   /* if received ACK is not corrupted */ 
+   if (!IsCorrupted(packet)) {
+     if (TRACE > 0)
+       printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
+     total_ACKs_received++;
+ 
+     /* mark the corresponding packet as ACKed */ 
+     for (i = 0; i < WINDOWSIZE; i++) {
+       int current_index = (A_windowfirst + i) % WINDOWSIZE;
+       if (A_buffer[current_index].seqnum == packet.acknum) {
+         A_acked[current_index] = true;
+         /* 停止对应的定时器 */
+         stoptimer(A_timers[current_index]);
+         break;
+       }
+     }
+ 
+     /* slide window forward if the first packet in the window is ACKed */
+     while (A_windowcount > 0 && A_acked[A_windowfirst]) {
+       A_acked[A_windowfirst] = false;
+       A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
+       A_windowcount--;
+       if (TRACE > 1)
+         printf("Window slid forward. New window count: %d\n", A_windowcount);
+     }
+   }
+   else 
+     if (TRACE > 0)
+       printf ("----A: corrupted ACK is received, do nothing!\n");
+ }
+ 
 
-    /* create packet */
-    sendpkt.seqnum = A_nextseqnum;
-    sendpkt.acknum = NOTINUSE;
-    for ( i=0; i<20 ; i++ ) 
-      sendpkt.payload[i] = message.data[i];
-    sendpkt.checksum = ComputeChecksum(sendpkt); 
-
-    /* put packet in window buffer */
-    windowlast = (windowlast + 1) % WINDOWSIZE; 
-    buffer[windowlast] = sendpkt;
-    acked[windowlast] = false;  /* Mark packet as unacked*/
-    windowcount++;
-
-    /* send out packet */
-    if (TRACE > 0)
-      printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
-    tolayer3 (A, sendpkt);
-
-    /* start timer if first packet in window */
-    if (windowcount == 1)
-      starttimer(A,RTT);
-
-    /* get next sequence number, wrap back to 0 */
-    A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
-  }
-  /* if blocked,  window is full */
-  else {
-    if (TRACE > 0)
-      printf("----A: New message arrives, send window is full\n");
-    window_full++;
-  }
-}
-
-/* called from layer 3, when a packet arrives for layer 4 
-   In this practical this will always be an ACK as B never sends data.
-*/
-/* A_input 网络层（3）发往传输层（4） */
-
-
-
-void A_input(struct pkt packet)
-{
-  int i;
-
-  /* if received ACK is not corrupted */ 
-  if (!IsCorrupted(packet)) {
-    if (TRACE > 0)
-      printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
-    total_ACKs_received++;
-
-    /* mark the corresponding packet as ACKed */ 
-    for (i = 0; i < WINDOWSIZE; i++) {
-      int current_index = (windowfirst + i) % WINDOWSIZE;
-      if (buffer[current_index].seqnum == packet.acknum) {
-        acked[current_index] = true;
-        break;
-      }
-    }
-
-    /* slide window forward if the first packet in the window is ACKed */
-    while (windowcount > 0 && acked[windowfirst]) {
-      acked[windowfirst] = false; /* 重置标记*/
-      windowfirst = (windowfirst + 1) % WINDOWSIZE;
-      windowcount--;
-      if (TRACE > 1)
-        printf("Window slid forward. New window count: %d\n", windowcount);
-    }
-
-    /* start timer again if there are still more unacked packets in window */
-    stoptimer(A);
-    if (windowcount > 0)
-      starttimer(A, RTT);
-  }
-  else 
-    if (TRACE > 0)
-      printf ("----A: corrupted ACK is received, do nothing!\n");
-}
-
-void A_timerinterrupt(void)
+/* 定时器超时回调函数，需要修改以处理单个数据包的超时 */
+void A_timerinterrupt(int timer_id)
 {
   int i;
 
-  if (TRACE > 0)
-    printf("----A: time out, resend unacked packets!\n");
-
-  for(i = 0; i < windowcount; i++) {
-    int current_index = (windowfirst + i) % WINDOWSIZE;
-    if (!acked[current_index]) {
+  for (i = 0; i < WINDOWSIZE; i++) {
+    if (A_timers[i] == timer_id && !A_acked[i]&& (i >= A_windowfirst && i <= A_windowlast)) {
       if (TRACE > 0)
-        printf ("---A: resending packet %d\n", buffer[current_index].seqnum);
+        printf ("---A: resending packet %d\n", A_buffer[i].seqnum);
 
-      tolayer3(A, buffer[current_index]);
+      tolayer3(A, A_buffer[i]);
       packets_resent++;
+
+      /* 重新启动定时器 */
+      A_timers[i] = starttimer(A, RTT);
+      break;
     }
   }
-
-  starttimer(A, RTT);
-}
-
-
+} 
 
 void A_init(void)
 {
   int i ;
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
-  windowfirst = 0;
-  windowlast = -1;   
-  windowcount = 0;
-  /*int i ;  */
+  A_windowfirst = 0;
+  A_windowlast = -1;
+  A_windowcount = 0;
   for (i = 0; i < WINDOWSIZE; i++) {
-    acked[i] = false;
+      A_acked[i] = false;
+      A_timers[i] = -1;
   }
 }
 
-/********* Receiver (B)  variables and procedures ************/
-
-static int expectedseqnum; /* the sequence number expected next by the receiver */
+/********* Receiver (B) variables and procedures ************/
+static int B_expectedseqnum; /* the sequence number expected next by the receiver */
 static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
-static struct pkt buffer[WINDOWSIZE];  /* array for storing out-of-order packets */
-static bool received[WINDOWSIZE];      /* array to track which packets have been received */
+static struct pkt B_buffer[WINDOWSIZE];  /* array for storing out-of-order packets */
+static bool B_received[WINDOWSIZE];      /* array to track which packets have been received */
 
 /* 从网络层（3）收取数据到传输层（4） */
+
+
 void B_input(struct pkt packet)
 {
   struct pkt sendpkt;
@@ -211,24 +201,24 @@ void B_input(struct pkt packet)
 
     /* store the packet if it's within the window */
     /*int index; */
-    index = (packet.seqnum - expectedseqnum + SEQSPACE) % SEQSPACE;
-    if (index < WINDOWSIZE) {
-      buffer[index] = packet;
-      received[index] = true;
-    }
+    index = (packet.seqnum - B_expectedseqnum + SEQSPACE) % SEQSPACE;
+    if (index >= 0 && index < WINDOWSIZE) {
+      B_buffer[index] = packet;
+      B_received[index] = true;
+  }
 
     /* deliver in-order packets to the application */
-    while (received[0]) {
-      tolayer5(B, buffer[0].payload); /*由传输层（4）交付给应用层（5）*/
+    while (B_received[0]) {
+      tolayer5(B, B_buffer[0].payload); /*由传输层（4）交付给应用层（5）*/
 
       /* shift the window forward */
       for (i = 0; i < WINDOWSIZE - 1; i++) {
-        buffer[i] = buffer[i + 1];
-        received[i] = received[i + 1];
+        B_buffer[i] = B_buffer[i + 1];
+        B_received[i] = B_received[i + 1];
       }
-      received[WINDOWSIZE - 1] = false;
+      B_received[WINDOWSIZE - 1] = false;
 
-      expectedseqnum = (expectedseqnum + 1) % SEQSPACE;
+      B_expectedseqnum = (B_expectedseqnum + 1) % SEQSPACE;
     }
 
     /* send an ACK for the received packet */
@@ -249,24 +239,14 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init(void)
 {
-  expectedseqnum = 0;
-  B_nextseqnum = 1;
   int i;
+  B_expectedseqnum = 0;
+  B_nextseqnum = 1;
+
   for (i = 0; i < WINDOWSIZE; i++) {
-    received[i] = false;
+    B_received[i] = false;
   }
 }
-/******************************************************************************
- * The following functions need be completed only for bi-directional messages *
- *****************************************************************************/
 
-/* Note that with simplex transfer from a-to-B, there is no B_output() */
-void B_output(struct msg message)  
-{
-}
-
-/* called when B's timer goes off */
-void B_timerinterrupt(void)
-{
-}
-
+void B_output(struct msg message) { }        /* 空实现 */
+void B_timerinterrupt() { }                  /* 空实现 */
