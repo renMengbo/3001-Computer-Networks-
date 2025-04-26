@@ -110,44 +110,56 @@ void A_output(struct msg message)
    }
  }
 
- void A_input(struct pkt packet)
- {
-   int i;
- 
-   /* if received ACK is not corrupted */ 
-   if (!IsCorrupted(packet)) {
-     if (TRACE > 0)
-       printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
-     total_ACKs_received++;
- 
-     /* mark the corresponding packet as ACKed */ 
-     for (i = 0; i < WINDOWSIZE; i++) {
-       int current_index = (A_windowfirst + i) % WINDOWSIZE;
-       if (A_buffer[current_index].seqnum == packet.acknum) {
-         A_acked[current_index] = true;
-         break;
-       }
-     }
- 
-     /* slide window forward if the first packet in the window is ACKed */
-     while (A_windowcount > 0 && A_acked[A_windowfirst]) {
-       A_acked[A_windowfirst] = false;
-       A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
-       A_windowcount--;
+ /* called from layer 3, when a packet arrives for layer 4 
+   In this practical this will always be an ACK as B never sends data.
+*/
+void A_input(struct pkt packet)
+{
+  int i;
+  bool is_new_ack = false;
 
-    /* start timer again if there are still more unacked packets in window */
-       stoptimer(A);
-       if (A_windowcount > 0)
-            starttimer(A, RTT);
+  /* if received ACK is not corrupted */ 
+  if (!IsCorrupted(packet)) {
+    if (TRACE > 0)
+      printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
+    total_ACKs_received++;
+
+    /* mark the corresponding packet as ACKed */ 
+    for (i = 0; i < WINDOWSIZE; i++) {
+      int current_index = (A_windowfirst + i) % WINDOWSIZE;
+      if (A_buffer[current_index].seqnum == packet.acknum) {
+        if (!A_acked[current_index]) {
+          is_new_ack = true;
+        }
+        A_acked[current_index] = true;
+        break;
+      }
+    }
+
+    if (is_new_ack) {
+      new_ACKs++;
+    }
+
+    /* slide window forward if the first packet in the window is ACKed */
+    while (A_windowcount > 0 && A_acked[A_windowfirst]) {
+      A_acked[A_windowfirst] = false;
+      A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
+      A_windowcount--;
+
+      /* start timer again if there are still more unacked packets in window */
+      stoptimer(A);
+      if (A_windowcount > 0)
+        starttimer(A, RTT);
    
-       if (TRACE > 1)
-         printf("Window slid forward. New window count: %d\n", A_windowcount);
-     }
-   }
-   else 
-     if (TRACE > 0)
-       printf ("----A: corrupted ACK is received, do nothing!\n");
- }
+      if (TRACE > 1)
+        printf("Window slid forward. New window count: %d\n", A_windowcount);
+    }
+  }
+  else 
+    if (TRACE > 0)
+      printf ("----A: corrupted ACK is received, do nothing!\n");
+}
+
  
 
 /* 定时器超时回调函数，需要修改以处理单个数据包的超时 */
