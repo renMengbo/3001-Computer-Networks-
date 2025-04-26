@@ -60,7 +60,7 @@ static bool A_acked[WINDOWSIZE];         /* array to track which packets have be
 static int A_windowfirst, A_windowlast;   /* array indexes of the first/last packet awaiting ACK */
 static int A_windowcount;               /* the number of packets currently awaiting an ACK */
 static int A_nextseqnum;               /* the next sequence number to be used by the sender */
-static int A_timers[WINDOWSIZE];         /* 为每个数据包维护一个定时器标识 */
+
 
 
 
@@ -94,8 +94,10 @@ void A_output(struct msg message)
        printf("Sending packet %d to layer 3\n", sendpkt.seqnum);
      tolayer3 (A, sendpkt);
  
-     /* 启动对应的定时器 */
-     A_timers[A_windowlast] = starttimer(A, RTT);
+    
+     /* start timer if first packet in window */
+     if (A_windowcount == 1)
+        starttimer(A, RTT);
  
      /* get next sequence number, wrap back to 0 */
      A_nextseqnum = (A_nextseqnum + 1) % SEQSPACE;  
@@ -123,8 +125,6 @@ void A_output(struct msg message)
        int current_index = (A_windowfirst + i) % WINDOWSIZE;
        if (A_buffer[current_index].seqnum == packet.acknum) {
          A_acked[current_index] = true;
-         /* 停止对应的定时器 */
-         stoptimer(A_timers[current_index]);
          break;
        }
      }
@@ -134,6 +134,12 @@ void A_output(struct msg message)
        A_acked[A_windowfirst] = false;
        A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
        A_windowcount--;
+
+    /* start timer again if there are still more unacked packets in window */
+       stoptimer(A);
+       if (A_windowcount > 0)
+            starttimer(A, RTT);
+   
        if (TRACE > 1)
          printf("Window slid forward. New window count: %d\n", A_windowcount);
      }
@@ -150,7 +156,7 @@ void A_timerinterrupt(int timer_id)
   int i;
 
   for (i = 0; i < WINDOWSIZE; i++) {
-    if (A_timers[i] == timer_id && !A_acked[i]&& (i >= A_windowfirst && i <= A_windowlast)) {
+    if (!A_acked[i]&& (i >= A_windowfirst && i <= A_windowlast)) {
       if (TRACE > 0)
         printf ("---A: resending packet %d\n", A_buffer[i].seqnum);
 
@@ -158,7 +164,7 @@ void A_timerinterrupt(int timer_id)
       packets_resent++;
 
       /* 重新启动定时器 */
-      A_timers[i] = starttimer(A, RTT);
+      starttimer(A, RTT);
       break;
     }
   }
@@ -174,7 +180,6 @@ void A_init(void)
   A_windowcount = 0;
   for (i = 0; i < WINDOWSIZE; i++) {
       A_acked[i] = false;
-      A_timers[i] = -1;
   }
 }
 
