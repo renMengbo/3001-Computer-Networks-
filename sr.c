@@ -116,7 +116,6 @@ void A_output(struct msg message)
 void A_input(struct pkt packet)
 {
   int i;
-  bool is_new_ack = false;
 
   /* if received ACK is not corrupted */ 
   if (!IsCorrupted(packet)) {
@@ -124,63 +123,78 @@ void A_input(struct pkt packet)
       printf("----A: uncorrupted ACK %d is received\n",packet.acknum);
     total_ACKs_received++;
 
-    /* mark the corresponding packet as ACKed */ 
-    for (i = 0; i < WINDOWSIZE; i++) {
-      int current_index = (A_windowfirst + i) % WINDOWSIZE;
-      if (A_buffer[current_index].seqnum == packet.acknum) {
-        if (!A_acked[current_index]) {
-          is_new_ack = true;
-        }
-        A_acked[current_index] = true;
-        break;
-      }
-    }
+    /* check if new ACK or duplicate */
+    if (A_windowcount > 0) {
+          int seqfirst = A_buffer[A_windowfirst].seqnum;
+          int seqlast = A_buffer[A_windowlast].seqnum;
+          /* check case when seqnum has and hasn't wrapped */
+          if (((seqfirst <= seqlast) && (packet.acknum >= seqfirst && packet.acknum <= seqlast)) ||
+              ((seqfirst > seqlast) && (packet.acknum >= seqfirst || packet.acknum <= seqlast))) {
 
-    if (is_new_ack) {
-      new_ACKs++;
-    }
+            /* packet is a new ACK */
+            if (TRACE > 0)
+              printf("----A: ACK %d is not a duplicate\n",packet.acknum);
+            new_ACKs++;
 
-    /* slide window forward if the first packet in the window is ACKed */
-    while (A_windowcount > 0 && A_acked[A_windowfirst]) {
-      A_acked[A_windowfirst] = false;
-      A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
-      A_windowcount--;
+            /* Selective Repeat: only mark this specific packet as acknowledged */
+            for (i = 0; i < WINDOWSIZE; i++) {
+                int idx = (A_windowfirst + i) % WINDOWSIZE;
+                if (A_buffer[idx].seqnum == packet.acknum) {
+                    A_acked[idx] = true;  /* Mark this packet as acknowledged */
+                    /*A_windowlast--;          Decrease the count of unacked packets 
+                    A_windowcount--; */
+                    break;
+                }
+            }
 
-      /* start timer again if there are still more unacked packets in window */
-      stoptimer(A);
-      if (A_windowcount > 0)
-        starttimer(A, RTT);
-   
-      if (TRACE > 1)
-        printf("Window slid forward. New window count: %d\n", A_windowcount);
+            /* Slide window forward if possible (keep same logic as before) */
+            while (A_windowcount > 0 &&  A_acked[A_windowfirst]) {
+                A_windowfirst = (A_windowfirst + 1) % WINDOWSIZE;
+                A_windowcount--;
+            }                      
+           
+            A_windowlast = (A_windowfirst + A_windowcount - 1 + WINDOWSIZE) % WINDOWSIZE;         
+           
+            /* Restart timer if any packets still unacknowledged */
+            stoptimer(A);
+            if (A_windowcount > 0)
+              starttimer(A, RTT);
+
+          }
     }
+    else
+      if (TRACE > 0)
+        printf ("----A: duplicate ACK received, do nothing!\n");
   }
   else 
     if (TRACE > 0)
       printf ("----A: corrupted ACK is received, do nothing!\n");
 }
 
- 
 
-/* 定时器超时回调函数，需要修改以处理单个数据包的超时 */
-void A_timerinterrupt()
+
+/* called when A's timer goes off */
+void A_timerinterrupt(void)
 {
   int i;
 
-  for (i = 0; i < WINDOWSIZE; i++) {
-    if (!A_acked[i]&& (i >= A_windowfirst && i <= A_windowlast)) {
+  if (TRACE > 0)
+    printf("----A: time out,resend packets!\n");
+
+  for(i=0; i<A_windowcount; i++) {
+    int idx = (A_windowfirst + i) % WINDOWSIZE;
+    if (!A_acked[idx]) {
       if (TRACE > 0)
-        printf ("---A: resending packet %d\n", A_buffer[i].seqnum);
+        printf ("---A: resending packet %d\n", A_buffer[idx].seqnum);
 
-      tolayer3(A, A_buffer[i]);
+      tolayer3(A, A_buffer[idx]);
       packets_resent++;
-
-      /* 重新启动定时器 */
-      starttimer(A, RTT);
-      break;
-    }
+      if (i==0) starttimer(A,RTT);
+    }  
   }
-} 
+}     
+
+
 
 void A_init(void)
 {
@@ -188,7 +202,10 @@ void A_init(void)
   /* initialise A's window, buffer and sequence number */
   A_nextseqnum = 0;  /* A starts with seq num 0, do not change this */
   A_windowfirst = 0;
-  A_windowlast = -1;
+  A_windowlast = -1; /* windowlast is where the last packet sent is stored.  
+		     new packets are placed in winlast + 1 
+		     so initially this is set to -1
+		   */
   A_windowcount = 0;
   for (i = 0; i < WINDOWSIZE; i++) {
       A_acked[i] = false;
@@ -196,13 +213,12 @@ void A_init(void)
 }
 
 /********* Receiver (B) variables and procedures ************/
-static int B_expectedseqnum; /* the sequence number expected next by the receiver */
-static int B_nextseqnum;   /* the sequence number for the next packets sent by B */
+static int B_expectedseqnum; /*  the sequence number expected next by the receiver */
+/*static int B_nextseqnum;    the sequence number for the next packets sent by B */
 static struct pkt B_buffer[WINDOWSIZE];  /* array for storing out-of-order packets */
 static bool B_received[WINDOWSIZE];      /* array to track which packets have been received */
 
 /* 从网络层（3）收取数据到传输层（4） */
-
 
 void B_input(struct pkt packet)
 {
@@ -217,18 +233,18 @@ void B_input(struct pkt packet)
     packets_received++;
 
     /* store the packet if it's within the window */
-    /*int index; */
+   
     index = (packet.seqnum - B_expectedseqnum + SEQSPACE) % SEQSPACE;
     if (index >= 0 && index < WINDOWSIZE) {
       B_buffer[index] = packet;
       B_received[index] = true;
-  }
+    }
 
     /* deliver in-order packets to the application */
     while (B_received[0]) {
-      tolayer5(B, B_buffer[0].payload); /*由传输层（4）交付给应用层（5）*/
+      tolayer5(B, B_buffer[0].payload); /*按序到达的由传输层（4）交付给应用层（5）*/
 
-      /* shift the window forward */
+      /* slide the window forward */
       for (i = 0; i < WINDOWSIZE - 1; i++) {
         B_buffer[i] = B_buffer[i + 1];
         B_received[i] = B_received[i + 1];
@@ -247,8 +263,10 @@ void B_input(struct pkt packet)
     tolayer3(B, sendpkt);/* 由传输层（4）回复给链路层（3）*/
   }
   else {
-    if (TRACE > 0) 
-      printf("----B: packet corrupted, do nothing!\n");
+    if (TRACE > 0) {
+       /*printf("----B: packet corrupted, do nothing!\n");*/
+       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
+    }
   }
 }
 
@@ -258,12 +276,12 @@ void B_init(void)
 {
   int i;
   B_expectedseqnum = 0;
-  B_nextseqnum = 1;
+  /*B_nextseqnum = 1;*/
 
   for (i = 0; i < WINDOWSIZE; i++) {
     B_received[i] = false;
   }
 }
 
-void B_output(struct msg message) { }        /* 空实现 */
-void B_timerinterrupt() { }                  /* 空实现 */
+void B_output(struct msg message) { }        
+void B_timerinterrupt() { }                  
