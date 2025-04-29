@@ -156,9 +156,12 @@ void A_input(struct pkt packet)
             A_windowlast = (A_windowfirst + A_windowcount - 1 + WINDOWSIZE) % WINDOWSIZE;         
            
             /* Restart timer if any packets still unacknowledged */
-            stoptimer(A);
-            if (A_windowcount > 0)
-              starttimer(A, RTT);
+            if (A_windowcount > 0) {
+                stoptimer(A);
+                starttimer(A, RTT); /* 如果仍有未确认的数据包，重新启动定时器 */
+            } else {
+                stoptimer(A);       /* 否则停止定时器 */
+            }
 
           }
     }
@@ -176,24 +179,27 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt(void)
 {
-  int i;
-
-  if (TRACE > 0)
-    printf("----A: time out,resend packets!\n");
-
-  for(i=0; i<A_windowcount; i++) {
-    int idx = (A_windowfirst + i) % WINDOWSIZE;
-    if (!A_acked[idx]) {
-      if (TRACE > 0)
-        printf ("---A: resending packet %d\n", A_buffer[idx].seqnum);
-
-      tolayer3(A, A_buffer[idx]);
-      packets_resent++;
-      if (i==0) starttimer(A,RTT);
-    }  
-  }
-}     
-
+    int idx;
+ 
+    if (TRACE > 0)
+      printf("----A: time out,resend packets!\n");
+ 
+    /* 找到最早未确认的数据包的索引 */
+    idx = A_windowfirst;
+    while (A_acked[idx]) {
+        idx = (idx + 1) % WINDOWSIZE;
+    }
+ 
+    /* 重传最早未确认的数据包 */
+    if (TRACE > 0)
+        printf("---A: resending packet %d\n", A_buffer[idx].seqnum);
+ 
+    tolayer3(A, A_buffer[idx]);
+    packets_resent++;
+ 
+    /* 重新启动定时器 */
+    starttimer(A, RTT);
+}
 
 
 void A_init(void)
