@@ -271,7 +271,7 @@ void B_input(struct pkt packet)
   else {
     if (TRACE > 0) {
        /*printf("----B: packet corrupted, do nothing!\n");*/
-       printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");
+       /*printf("----B: packet corrupted or not expected sequence number, resend ACK!\n");*/
     }
   }
 }
